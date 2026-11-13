@@ -713,6 +713,8 @@ export const ES = {
   Unpin: 'Desfijar',
   Pin: 'Fijar',
   Pinned: 'Fijado',
+  'Fold its executors': 'Plegar sus ejecutores',
+  'Show its executors': 'Mostrar sus ejecutores',
   'Mark as Unread': 'Marcar como no leído',
   'Rename Bot': 'Renombrar Bot',
   'Group settings': 'Ajustes del grupo',

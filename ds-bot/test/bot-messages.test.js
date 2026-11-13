@@ -336,11 +336,11 @@ test('stop_bot cancels the running turns and tells the Bot why in a new turn', a
   assert.equal(notice.source.role, 'stopped')
 })
 
-test('stop_bot belongs to a Main Bot', async (t) => {
+test('stop_bot belongs to a Main Bot, and a Bot stops only its own subbots', async (t) => {
   const { tool, stop } = await start(team())
   t.after(stop)
 
-  await assert.rejects(tool('stop_bot', { bot: 'Writer' }, 'b'), { message: 'Only a Main Bot can stop other Bots.' })
+  await assert.rejects(tool('stop_bot', { bot: 'Writer' }, 'b'), { message: 'Only a Main Bot can stop other Bots. A Bot stops only the subbots it derived.' })
   await assert.rejects(tool('stop_bot', { bot: 'Chief' }, 'a'), { message: 'You cannot stop yourself.' })
   await assert.rejects(tool('stop_bot', { bot: 'Writer' }, 'a'), { message: 'Writer is not running right now, so there is nothing to stop. Use message_bot to reach it.' })
 })

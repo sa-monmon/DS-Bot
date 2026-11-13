@@ -713,6 +713,8 @@ export const KO = {
   Unpin: '고정 해제',
   Pin: '고정',
   Pinned: '고정됨',
+  'Fold its executors': '하위 실행체 접기',
+  'Show its executors': '하위 실행체 표시',
   'Mark as Unread': '읽지 않음으로 표시',
   'Rename Bot': 'Bot 이름 변경',
   'Group settings': '그룹 설정',

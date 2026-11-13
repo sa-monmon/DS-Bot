@@ -2,7 +2,7 @@
 // the first Main Bot of a new team.
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, SECTION_COLORS, SECTION_NAME_MAX } from './constants.js'
+import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, SECTION_COLORS, SECTION_NAME_MAX, SUBBOT_KICKOFF, SUBBOT_MAX_ACTIVE } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 
@@ -188,7 +188,7 @@ export function install(rt) {
     return holdName('bot', cleanName, () => buildBot(cleanName, options))
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, section, sectionId }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, section, sectionId, subbotOf, task, parentWork }) {
     const cleanAvatarValue = cleanAvatar(avatar)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultBotModel()
@@ -203,10 +203,11 @@ export function install(rt) {
     const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
     const clash = dir === undefined ? undefined : await rt.privateClash(dir)
     if (clash) throw new Error(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${cleanName} cannot work there`)
-    if (!main && (section !== undefined || sectionId !== undefined)) resolveSectionInput({ section, sectionId }, { allowCreate: false })
+    if (!main && !subbotOf && (section !== undefined || sectionId !== undefined)) resolveSectionInput({ section, sectionId }, { allowCreate: false })
     const id = await createSession(cleanName, { dir })
     try {
-      const resolvedSecId = !main ? resolveSectionInput({ section, sectionId }) : undefined
+      // A subbot follows its parent's work line, so it takes no sidebar section of its own.
+      const resolvedSecId = !main && !subbotOf ? resolveSectionInput({ section, sectionId }) : undefined
       state.bots[id] = {
         id,
         name: cleanName,
@@ -218,12 +219,26 @@ export function install(rt) {
         ...(effortId ? { effort: effortId } : {}),
         ...(dir ? { workDir: dir } : {}),
         ...(resolvedSecId ? { sectionId: resolvedSecId } : {}),
+        ...(subbotOf ? { parentBotId: subbotOf } : {}),
         instructions: String(instructions).trim(),
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
         capabilities: [],
       }
       if (main) state.mainBotIds.push(id)
+      // A subbot reports to its parent instead of greeting the user: its parent's work
+      // is its first message, so the answer goes back up the hand-off tree by itself.
+      if (subbotOf) {
+        const bot = state.bots[id]
+        const parent = rt.botOf(subbotOf)
+        await rt.save()
+        await rt.resolveAgent(id).catch(error => rt.warn('ds-bot: scoped tools for %s not applied: %s', cleanName, error))
+        void rt.waitForModel(bot)
+          .then(() => rt.applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)))
+          .then(() => startSubbot(bot, parent, task, parentWork))
+          .catch(error => rt.warn('ds-bot: %s did not start its work: %s', cleanName, error))
+        return bot
+      }
       const creator = rt.botOf(createdBy)
       const original = rt.botOf(copyOf)
       const language = rt.uiLanguage?.()
@@ -334,6 +349,39 @@ export function install(rt) {
     if (bot?.kickoff?.afterUser !== true) return
     delete bot.kickoff
     void rt.save().catch(() => {})
+  }
+
+  // Subbots (#421): a Bot derives an executor under itself for one work line. Same
+  // machinery as a Bot — its own Session, name, folder, model — but the record says
+  // who derived it (`parentBotId`), it never greets the user, and the first message
+  // it gets is the parent's work, so its answer goes back up the hand-off tree.
+  async function createSubbot(options) {
+    const parent = rt.botOf(options.parentId)
+    if (parent === undefined) throw new Error('Only a Bot on the team can derive a subbot')
+    if (parent.parentBotId !== undefined) throw new Error(`${parent.name} is itself a subbot, and a subbot derives none of its own`)
+    const active = Object.values(state.bots).filter(bot => bot.parentBotId === parent.id)
+    if (active.length >= SUBBOT_MAX_ACTIVE) {
+      throw new Error(`${parent.name} already has ${active.length} subbots, the most it may have at once. Reclaim one of them first: ${active.map(bot => bot.name).join(', ')}`)
+    }
+    // A derived name says what it is, so it cannot be mistaken for a copy of the parent.
+    const cleanName = String(options.name ?? '').trim() || freshName(`${parent.name}-work`)
+    return createBot({ ...options, name: cleanName, createdBy: parent.id, subbotOf: parent.id })
+  }
+
+  // The one message a new subbot starts on. With a task it comes from the parent as
+  // a request (so the answer goes back up), without one as the setup message that
+  // tells it to wait for the parent.
+  async function startSubbot(bot, parent, task, parentWork) {
+    // The Bot can be gone again before its model is ready (a reclaim in that window).
+    if (rt.botOf(bot.id) === undefined) return
+    const text = SUBBOT_KICKOFF.replaceAll('{parent}', parent.name)
+    if (task === undefined) {
+      await rt.deliver({ fromId: parent.id, toId: bot.id, text, role: 'kickoff' })
+      return
+    }
+    const exchangeId = randomUUID()
+    rt.openWork?.(exchangeId, { from: parent.id, to: bot.id, ...(parentWork === undefined ? {} : { parent: parentWork }) })
+    await rt.deliver({ fromId: parent.id, toId: bot.id, text: `${text}\n\n## The work you were derived for\n\n${task}`, role: 'request', exchangeId })
   }
 
   async function duplicateBot(id) {
@@ -865,6 +913,13 @@ export function install(rt) {
     const bot = liveBot(id)
     if (bot === undefined) throw new Error('Unknown Bot')
     if (rt.isMain(id)) throw new Error('A Main Bot cannot be deleted; remove its Main Bot role first')
+    // A Bot carries its subbots: they are executors of its work lines and cannot outlive
+    // the Bot that derived them, or nothing would reclaim them (#421).
+    const children = Object.values(state.bots).filter(other => other.parentBotId === id)
+    for (const child of children) {
+      if (child.parentBotId !== id) continue
+      await deleteBot(child.id)
+    }
     deleting.add(id)
     try {
       // Before the Bot and its group Sessions leave the state, which the archive reads.
@@ -953,6 +1008,6 @@ export function install(rt) {
     ensureWorkspace, keepTeamFolder, createSession, createBot, duplicateBot, updateBot, setFlags,
     saveSection, reorderSections, deleteSection,
     roomBusy, autoRoomName, retitleRoom, createRoom, updateRoom, deleteRoom,
-    setMain, deleteBot, bootstrap, releaseKickoff, greetingOut, holdKickoffAgain, userWrote, userAnswered,
+    setMain, deleteBot, bootstrap, releaseKickoff, greetingOut, holdKickoffAgain, userWrote, userAnswered, createSubbot,
   })
 }

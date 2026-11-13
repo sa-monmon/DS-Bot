@@ -835,6 +835,8 @@ var JA = {
   "Unpin": "ピン留めを解除",
   "Pin": "ピン留め",
   "Pinned": "ピン留め済み",
+  "Fold its executors": "配下の実行体をたたむ",
+  "Show its executors": "配下の実行体を表示",
   "Mark as Unread": "未読にする",
   "Rename Bot": "Bot の名前を変更",
   "Group settings": "グループ設定",
@@ -3145,6 +3147,8 @@ var KO = {
   Unpin: "고정 해제",
   Pin: "고정",
   Pinned: "고정됨",
+  "Fold its executors": "하위 실행체 접기",
+  "Show its executors": "하위 실행체 표시",
   "Mark as Unread": "읽지 않음으로 표시",
   "Rename Bot": "Bot 이름 변경",
   "Group settings": "그룹 설정",
@@ -5478,6 +5482,8 @@ var ES = {
   Unpin: "Desfijar",
   Pin: "Fijar",
   Pinned: "Fijado",
+  "Fold its executors": "Plegar sus ejecutores",
+  "Show its executors": "Mostrar sus ejecutores",
   "Mark as Unread": "Marcar como no leído",
   "Rename Bot": "Renombrar Bot",
   "Group settings": "Ajustes del grupo",
@@ -7789,6 +7795,8 @@ var FR = {
   "Unpin": "Désépingler",
   "Pin": "Épingler",
   "Pinned": "Épinglé",
+  "Fold its executors": "Replier ses exécuteurs",
+  "Show its executors": "Afficher ses exécuteurs",
   "Mark as Unread": "Marquer comme non lu",
   "Rename Bot": "Renommer le Bot",
   "Group settings": "Paramètres du groupe",
@@ -10099,6 +10107,8 @@ var DE = {
   Unpin: "Lösen",
   Pin: "Anheften",
   Pinned: "Angeheftet",
+  "Fold its executors": "Ausführende einklappen",
+  "Show its executors": "Ausführende anzeigen",
   "Mark as Unread": "Als ungelesen markieren",
   "Rename Bot": "Bot umbenennen",
   "Group settings": "Gruppeneinstellungen",
@@ -12432,6 +12442,8 @@ var ZH = {
   Unpin: "取消置顶",
   Pin: "置顶",
   Pinned: "已置顶",
+  "Fold its executors": "收起执行体",
+  "Show its executors": "显示执行体",
   "Mark as Unread": "标为未读",
   "Rename Bot": "重命名 Bot",
   "Group settings": "群设置",
@@ -15068,6 +15080,15 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Subbots: folded under the Bot that derived them, drawn one level in (#421). */
+.bt-sub-head{position:relative;display:flex;align-items:center;gap:2px}
+.bt-sub-head>.bt-row{flex:1 1 auto;min-width:0}
+.bt-sub-toggle{flex:none;display:grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--bt-ink-2);cursor:pointer;transition:rotate .16s ease,background-color .12s ease}
+.bt-sub-toggle:hover{background:var(--bt-hover);color:var(--bt-ink)}
+.bt-sub-toggle[aria-expanded=true]{rotate:90deg}
+.bt-sub-list{padding-left:14px;border-left:1px solid var(--bt-line);margin-left:18px}
+.bt-row-sub{min-height:44px}
+.bt-row-sub>.bt-mark,.bt-row-sub>.bt-mark-shell{scale:.82;transform-origin:center}
 .bt-unread{width:8px;height:8px;border-radius:50%;background:var(--bt-accent);flex:none;margin-right:2px;animation:bt-fade .13s cubic-bezier(.22,1,.36,1)}
 .bt-unread-wait{background:var(--bt-star)}
 /* Our own left column, portalled over the shell's collapsed sidebar. It reaches
@@ -27603,7 +27624,7 @@ var waitingFor = (roster, waits) => {
   const names = [...(waits?.bots ?? []).map((id) => roster.byId[id]?.name), ...(waits?.rooms ?? []).map((id) => roster.roomsById[id]?.name)].filter(Boolean);
   return names.length === 0 ? "" : t("Waiting for {names}", { names: names.join(t(" and ")) });
 };
-function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, onDragStart }) {
+function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, onDragStart, sub }) {
   const id = bot.id;
   const part = currentPart(bot);
   const preview = useSessions((list) => previewOf(list, part, roster.exchangeTurns[part]));
@@ -27653,7 +27674,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     "button",
     {
       type: "button",
-      className: "bt-row",
+      className: sub === true ? "bt-row bt-row-sub" : "bt-row",
       "aria-label": label,
       "aria-current": active ? "page" : void 0,
       "data-bot-id": id,
@@ -27868,7 +27889,46 @@ function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, 
   );
 }
 function renderSidebarEntry(entry, rowProps, markedUnread, onDragStart) {
+  const subbots = entry.kind === "bot" ? rowProps.subbotsOf?.[entry.item.id] : void 0;
+  if (subbots !== void 0 && subbots.length > 0) {
+    const open = rowProps.roster.prefs?.subbotsOpen?.[entry.item.id] === true;
+    return (0, import_react34.createElement)(BotGroupRow, {
+      key: entry.item.id,
+      bot: entry.item,
+      subbots,
+      rowProps,
+      markedUnread,
+      onDragStart,
+      open,
+      onToggle: (id) => rowProps.actions.setPrefs({ subbotsOpen: { ...rowProps.roster.prefs?.subbotsOpen ?? {}, [id]: !open } })
+    });
+  }
   return entry.kind === "bot" ? (0, import_react34.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true, onDragStart }) : entry.kind === "room" ? (0, import_react34.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true, onDragStart }) : (0, import_react34.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true, onDragStart });
+}
+function BotGroupRow({ bot, subbots, rowProps, markedUnread, onDragStart, open, onToggle }) {
+  const { wide } = rowProps;
+  const toggle = () => onToggle(bot.id);
+  const chevron = wide ? (0, import_react34.createElement)("button", {
+    type: "button",
+    className: "bt-sub-toggle",
+    "aria-expanded": open,
+    title: t(open ? "Fold its executors" : "Show its executors"),
+    onClick: (event) => {
+      event.stopPropagation();
+      toggle();
+    }
+  }, (0, import_react34.createElement)(ChevronRightIcon)) : null;
+  return (0, import_react34.createElement)(
+    import_react34.Fragment,
+    null,
+    chevron === null ? (0, import_react34.createElement)(BotRow, { ...rowProps, bot, marked: markedUnread[bot.id] === true, onDragStart }) : (0, import_react34.createElement)(
+      "div",
+      { className: "bt-sub-head", "data-open": open ? "true" : void 0 },
+      (0, import_react34.createElement)(BotRow, { ...rowProps, bot, marked: markedUnread[bot.id] === true, onDragStart }),
+      chevron
+    ),
+    open ? (0, import_react34.createElement)("div", { className: "bt-sub-list" }, subbots.map((sub) => (0, import_react34.createElement)(BotRow, { key: sub.id, ...rowProps, bot: sub, sub: true, marked: markedUnread[sub.id] === true }))) : null
+  );
 }
 function SectionBlock({ section, entries: entries2, rowProps, markedUnread, renaming, dropTarget, onDragStart, onDragOverSec, onDropSec }) {
   const { roster, actions, useSessions, useSessionStatus, useWork, wide } = rowProps;
@@ -28168,7 +28228,8 @@ function TeamSidebar(props) {
   const order = (0, import_react34.useMemo)(() => {
     const stamps = JSON.parse(updated);
     const entries2 = [
-      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      // A subbot is drawn under the Bot that derived it, not in the flat list (#421).
+      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId && bot.parentBotId === void 0).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map((room2) => ({ kind: "room", item: room2, at: stamps[room2.id] ?? room2.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map((agent) => ({ kind: "agent", item: agent, at: Math.max(0, ...agent.sessions.map((id) => stamps[id] ?? 0)) || agent.createdAt }))
@@ -28394,7 +28455,15 @@ function TeamSidebar(props) {
     openAgentSession: (id) => navigate(actions.openAgentSession, id),
     newAgentSession: (id) => navigate(actions.newAgentSession, id)
   };
-  const rowProps = { roster, actions: rowActions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide: wideContent };
+  const subbotsOf = (0, import_react34.useMemo)(() => {
+    const map = {};
+    for (const bot of roster.bots) {
+      if (bot.parentBotId === void 0) continue;
+      (map[bot.parentBotId] ??= []).push(bot);
+    }
+    return map;
+  }, [roster.bots]);
+  const rowProps = { roster, actions: rowActions, subbotsOf, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide: wideContent };
   const typeToSearch = (event) => {
     if (event.defaultPrevented || event.key.length !== 1 || event.key === " " || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return;
     if (event.target instanceof Element && event.target.closest("input,textarea,[contenteditable]")) return;

@@ -713,6 +713,8 @@ export const DE = {
   Unpin: 'Lösen',
   Pin: 'Anheften',
   Pinned: 'Angeheftet',
+  'Fold its executors': 'Ausführende einklappen',
+  'Show its executors': 'Ausführende anzeigen',
   'Mark as Unread': 'Als ungelesen markieren',
   'Rename Bot': 'Bot umbenennen',
   'Group settings': 'Gruppeneinstellungen',

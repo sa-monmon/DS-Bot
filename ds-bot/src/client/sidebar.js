@@ -60,7 +60,7 @@ const waitingFor = (roster, waits) => {
   return names.length === 0 ? '' : t('Waiting for {names}', { names: names.join(t(' and ')) })
 }
 
-function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, onDragStart }) {
+function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, onDragStart, sub }) {
   const id = bot.id
   const part = currentPart(bot)
   const preview = useSessions(list => previewOf(list, part, roster.exchangeTurns[part]))
@@ -100,7 +100,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
   }
   return h('button', {
-    type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
+    type: 'button', className: sub === true ? 'bt-row bt-row-sub' : 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-bot-id': id, title: wide ? undefined : bot.name,
     draggable: wide && !tile && onDragStart ? true : undefined,
     onDragStart: wide && !tile && onDragStart ? event => onDragStart(event, id) : undefined,
@@ -262,11 +262,42 @@ function AgentRow({ agent, actions, useSessions, useSessionStatus, useUi, wide, 
 }
 
 function renderSidebarEntry(entry, rowProps, markedUnread, onDragStart) {
+  const subbots = entry.kind === 'bot' ? rowProps.subbotsOf?.[entry.item.id] : undefined
+  if (subbots !== undefined && subbots.length > 0) {
+    const open = rowProps.roster.prefs?.subbotsOpen?.[entry.item.id] === true
+    return h(BotGroupRow, {
+      key: entry.item.id, bot: entry.item, subbots, rowProps, markedUnread, onDragStart, open,
+      onToggle: id => rowProps.actions.setPrefs({ subbotsOpen: { ...(rowProps.roster.prefs?.subbotsOpen ?? {}), [id]: !open } }),
+    })
+  }
   return entry.kind === 'bot'
     ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true, onDragStart })
     : entry.kind === 'room'
       ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true, onDragStart })
       : h(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true, onDragStart })
+}
+
+// A parent Bot's own row and its subbots folded under it (#421). The subbots keep every
+// power a Bot row has — the user opens, steers and stops them like any Bot — they are
+// just drawn one level in and only while the fold is open, so a team running several
+// projects does not turn into a flat list of executors.
+function BotGroupRow({ bot, subbots, rowProps, markedUnread, onDragStart, open, onToggle }) {
+  const { wide } = rowProps
+  const toggle = () => onToggle(bot.id)
+  const chevron = wide
+    ? h('button', {
+      type: 'button', className: 'bt-sub-toggle', 'aria-expanded': open, title: t(open ? 'Fold its executors' : 'Show its executors'),
+      onClick: (event) => { event.stopPropagation(); toggle() },
+    }, h(ChevronRightIcon))
+    : null
+  return h(Fragment, null,
+    chevron === null ? h(BotRow, { ...rowProps, bot, marked: markedUnread[bot.id] === true, onDragStart })
+      : h('div', { className: 'bt-sub-head', 'data-open': open ? 'true' : undefined },
+        h(BotRow, { ...rowProps, bot, marked: markedUnread[bot.id] === true, onDragStart }),
+        chevron),
+    open
+      ? h('div', { className: 'bt-sub-list' }, subbots.map(sub => h(BotRow, { key: sub.id, ...rowProps, bot: sub, sub: true, marked: markedUnread[sub.id] === true })))
+      : null)
 }
 
 function SectionBlock({ section, entries, rowProps, markedUnread, renaming, dropTarget, onDragStart, onDragOverSec, onDropSec }) {
@@ -528,7 +559,8 @@ export function TeamSidebar(props) {
   const order = useMemo(() => {
     const stamps = JSON.parse(updated)
     const entries = [
-      ...roster.bots.filter(bot => bot.id !== roster.mainBotId).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      // A subbot is drawn under the Bot that derived it, not in the flat list (#421).
+      ...roster.bots.filter(bot => bot.id !== roster.mainBotId && bot.parentBotId === undefined).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map(room => ({ kind: 'room', item: room, at: stamps[room.id] ?? room.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map(agent => ({ kind: 'agent', item: agent, at: Math.max(0, ...agent.sessions.map(id => stamps[id] ?? 0)) || agent.createdAt })),
@@ -768,7 +800,15 @@ export function TeamSidebar(props) {
     openAgentSession: id => navigate(actions.openAgentSession, id),
     newAgentSession: id => navigate(actions.newAgentSession, id),
   }
-  const rowProps = { roster, actions: rowActions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide: wideContent }
+  const subbotsOf = useMemo(() => {
+    const map = {}
+    for (const bot of roster.bots) {
+      if (bot.parentBotId === undefined) continue
+      ;(map[bot.parentBotId] ??= []).push(bot)
+    }
+    return map
+  }, [roster.bots])
+  const rowProps = { roster, actions: rowActions, subbotsOf, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide: wideContent }
   // Typing while the sidebar has focus starts a search.
   const typeToSearch = (event) => {
     if (event.defaultPrevented || event.key.length !== 1 || event.key === ' ' || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return

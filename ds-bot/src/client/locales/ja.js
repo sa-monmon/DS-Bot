@@ -713,6 +713,8 @@ export const JA = {
   "Unpin": "ピン留めを解除",
   "Pin": "ピン留め",
   "Pinned": "ピン留め済み",
+  "Fold its executors": "配下の実行体をたたむ",
+  "Show its executors": "配下の実行体を表示",
   "Mark as Unread": "未読にする",
   "Rename Bot": "Bot の名前を変更",
   "Group settings": "グループ設定",

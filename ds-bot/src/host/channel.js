@@ -225,6 +225,14 @@ export function install(rt) {
       if (sizes.length === 0) delete state.prefs.memoryLimits
       else state.prefs.memoryLimits = { ...state.prefs.memoryLimits, ...Object.fromEntries(sizes) }
     }
+    // Which parent Bots the user folded their subbots under (#421). A parent that has
+    // never been folded is folded while it has subbots, so a first derivation never
+    // drops a row into the list unasked.
+    if (body.subbotsOpen !== undefined) {
+      const opens = Object.entries(body.subbotsOpen ?? {}).filter(([botId, open]) => typeof botId === 'string' && typeof open === 'boolean')
+      if (opens.length === 0) delete state.prefs.subbotsOpen
+      else state.prefs.subbotsOpen = Object.fromEntries(opens)
+    }
     return rt.save()
   }
 

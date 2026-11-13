@@ -723,6 +723,8 @@ const ZH = {
   Unpin: '取消置顶',
   Pin: '置顶',
   Pinned: '已置顶',
+  'Fold its executors': '收起执行体',
+  'Show its executors': '显示执行体',
   'Mark as Unread': '标为未读',
   'Rename Bot': '重命名 Bot',
   'Group settings': '群设置',

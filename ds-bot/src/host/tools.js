@@ -1,6 +1,7 @@
 // Team tools: the roster, bot-to-bot messages, group chat settings and posts, and the
 // question and view cards. Group rounds and reading chats are in groups.js.
 import { randomUUID } from 'node:crypto'
+import { rm } from 'node:fs/promises'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { readAvatar } from './avatar.js'
 import { COLORS, EXTRA_COLORS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
@@ -90,7 +91,7 @@ export function install(rt) {
     if (bot.private === true && bot.id !== self) return `- ${bot.name} (${[bot.role, 'private Bot, closed to other Bots'].filter(Boolean).join(', ')})`
     const model = bot.appliedModel ?? bot.model
     const section = sectionNameOf(bot.sectionId)
-    const tags = [bot.role, section ? `section "${section}"` : '', model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.private === true ? 'private' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
+    const tags = [bot.role, section ? `section "${section}"` : '', model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.parentBotId !== undefined ? `derived by ${rt.botOf(bot.parentBotId)?.name ?? 'a Bot that left'}` : '', bot.private === true ? 'private' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
     const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
     const now = bot.id === self ? '' : `\n  now: ${rt.statusOf(bot.id)}`
     return `- ${bot.name}${tags ? ` (${tags})` : ''}${job}${now}`
@@ -326,7 +327,7 @@ export function install(rt) {
 
   rt.teamTools.push(defineTool({
     name: 'stop_bot',
-    description: 'Main Bot only. Stop another Bot\'s running turn immediately — when it must not finish a dangerous action and a message_bot warning is not enough. Its queued messages are dropped with the turn. It is then told why in a new turn, whose reply comes back to you.',
+    description: 'Main Bot only, or a Bot stopping a subbot it derived. Stop another Bot\'s running turn immediately — when it must not finish a dangerous action and a message_bot warning is not enough. Its queued messages are dropped with the turn. It is then told why in a new turn, whose reply comes back to you.',
     parameters: {
       bot: { type: 'string', required: true, description: 'Exact Bot name from list_bots' },
       reason: { type: 'string', description: 'Why it was stopped; it reads this afterwards' },
@@ -335,9 +336,11 @@ export function install(rt) {
     async execute(args, exec) {
       await rt.load()
       const sender = callerBot(exec)
-      if (sender === undefined || !rt.isMain(sender.id)) refuse('Only a Main Bot can stop other Bots.')
+      if (sender === undefined) refuse('Only Bots on the team can stop other Bots.')
       const target = rt.findBot(args.bot)
       if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`)
+      // A Bot steers its own executors (#421); every other Bot needs a Main Bot to stop it.
+      if (!rt.isMain(sender.id) && target.parentBotId !== sender.id) refuse('Only a Main Bot can stop other Bots. A Bot stops only the subbots it derived.')
       if (target.id === sender.id) refuse('You cannot stop yourself.')
       const { running } = activeSessions(target.id)
       if (running.length === 0) refuse(`${target.name} is not running right now, so there is nothing to stop. Use message_bot to reach it.`)
@@ -434,6 +437,96 @@ export function install(rt) {
       } catch (error) {
         return `Could not update the Bot: ${error.message}`
       }
+    },
+  }))
+
+  rt.teamTools.push(defineTool({
+    name: 'create_subbot',
+    description: 'Derive a short-lived executor under yourself for one work line (#421): it gets its own Session, its own working folder (usually a git worktree) and its own context, reports to you instead of greeting the user, and is meant to be reclaimed when the work line ends. Any Bot may call it; a subbot cannot derive another. Its answer comes back to you by itself as a reply, so do not message it afterwards.',
+    parameters: {
+      name: { type: 'string', description: 'Short name for the executor; leave out to get one derived from your own name' },
+      role: { type: 'string', description: 'Two-to-four character role label shown under the name' },
+      instructions: { type: 'string', description: 'What this executor is responsible for; it is told to report to you and not to the user' },
+      task: { type: 'string', description: 'The work it starts on right away, sent as your request to it. Leave it out and it waits for work you send with message_bot.' },
+      work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description} It must already exist: DS Bot does not create a git worktree for it.` },
+      model: { type: 'string', description: 'Model it runs on; leave out for the team default or your own' },
+      effort: { type: 'string', description: 'Thinking level for its model, as list_bot_models shows' },
+    },
+    output,
+    async execute(args, exec) {
+      await rt.load()
+      const parent = callerBot(exec)
+      if (parent === undefined) return 'Only Bots on the team can derive a subbot.'
+      if (parent.parentBotId !== undefined) return `${parent.name} is itself a subbot. A subbot derives none of its own; ask ${rt.botOf(parent.parentBotId)?.name ?? 'your parent'} for another work line.`
+      try {
+        const workDir = args.work_dir ? await rt.cleanWorkDir(args.work_dir) : undefined
+        if (workDir !== undefined && !(await rt.isFolder(workDir))) return `There is no folder at ${workDir}. Make the git worktree first, then derive the subbot with that folder.`
+        await rt.approveFolder(exec, { path: workDir, who: { en: 'the new executor', zh: '新执行体' } })
+        const served = new Set((await rt.catalog()).filter(entry => entry.needsKey !== true && rt.isLocalAgentRef?.(entry.ref) !== true).map(entry => entry.ref))
+        const fallback = [state.prefs.defaultBotModel, parent.model].find(ref => ref && served.has(ref))
+        const turn = rt.live.get(exec.agent?.id)?.info
+        const task = typeof args.task === 'string' && args.task.trim() !== '' ? args.task.trim() : undefined
+        const bot = await rt.createSubbot({
+          name: args.name,
+          role: args.role,
+          instructions: args.instructions,
+          task,
+          workDir,
+          model: args.model || fallback,
+          effort: args.effort,
+          parentId: parent.id,
+          parentWork: rt.workOf?.(turn),
+        })
+        return `Derived ${bot.name}${workDir ? `, working in ${workDir}` : ''}${task !== undefined ? '. It is starting on the work you gave it, and its result comes back to you as a reply.' : '. It reports to you and waits for work: send it with message_bot.'} The user can open, steer and stop it like any Bot.`
+      } catch (error) {
+        return `Could not derive the subbot: ${error.message}`
+      }
+    },
+  }))
+
+  rt.teamTools.push(defineTool({
+    name: 'reclaim_subbot',
+    description: 'Reclaim a subbot you derived once its work line is over: it leaves the team and its chat and memory are archived. Its working folder is kept by default, because the branch and the work in it outlive the executor; pass remove_worktree only when you mean to delete the folder too. A Bot reclaims its own subbots; a Main Bot any.',
+    parameters: {
+      bot: { type: 'string', required: true, description: 'Exact name of the subbot to reclaim' },
+      remove_worktree: { type: 'boolean', description: 'Also delete its working folder. Only when the work in it is merged or thrown away; this cannot be undone.' },
+      force: { type: 'boolean', description: 'Reclaim it while it is working, stopping its running turn first' },
+    },
+    output,
+    async execute(args, exec) {
+      await rt.load()
+      const self = rt.selfOf(exec.agent?.id)
+      const caller = rt.botOf(self)
+      if (caller === undefined) return 'Only Bots on the team can reclaim subbots.'
+      const target = rt.findBot(args.bot)
+      if (target === undefined) return `No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`
+      if (target.parentBotId === undefined) return `${target.name} is not a subbot; it is a Bot in its own right, and only the user deletes those.`
+      if (target.parentBotId !== caller.id && !rt.isMain(self)) return `${target.name} was derived by ${rt.botOf(target.parentBotId)?.name ?? 'another Bot'}, so only it or a Main Bot can reclaim it.`
+      const chat = rt.chatOf(target.id)
+      const working = rt.live.get(chat)?.turn !== undefined
+      if (working && args.force !== true) return `${target.name} is working right now. Stop it with stop_bot first, or pass force to stop it and reclaim it anyway.`
+      const folder = target.workDir
+      try {
+        if (working) {
+          const agent = await rt.resolveAgent(chat).catch(() => undefined)
+          agent?.cancel({ kind: 'hook', reason: 'ds-bot/reclaimed' })
+        }
+        await rt.deleteBot(target.id)
+      } catch (error) {
+        return `Could not reclaim ${target.name}: ${error.message}`
+      }
+      let kept = ''
+      if (folder !== undefined && args.remove_worktree === true) {
+        try {
+          await rm(folder, { recursive: true, force: true })
+          kept = ` Its working folder ${folder} was deleted.`
+        } catch (error) {
+          kept = ` Its working folder ${folder} was kept: ${error.message}`
+        }
+      } else if (folder !== undefined) {
+        kept = ` Its working folder ${folder} is kept with its branch and any work in it.`
+      }
+      return `Reclaimed ${target.name}; its chat and memory are archived.${kept}`
     },
   }))
 

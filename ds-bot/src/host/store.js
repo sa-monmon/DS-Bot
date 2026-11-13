@@ -146,6 +146,12 @@ export function install(rt) {
         delete bot.lab
         migrated = true
       }
+      // A subbot whose parent left the team is promoted to an independent Bot rather
+      // than dropped: its work line and its chat are still the user's (#421).
+      if (bot.parentBotId !== undefined && (typeof bot.parentBotId !== 'string' || state.bots[bot.parentBotId] === undefined)) {
+        delete bot.parentBotId
+        migrated = true
+      }
     }
     if (migrateLocalRoutes(state)) migrated = true
     // A team from before several Main Bots were allowed names a single one.

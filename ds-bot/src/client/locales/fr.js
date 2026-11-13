@@ -713,6 +713,8 @@ export const FR = {
   "Unpin": "Désépingler",
   "Pin": "Épingler",
   "Pinned": "Épinglé",
+  "Fold its executors": "Replier ses exécuteurs",
+  "Show its executors": "Afficher ses exécuteurs",
   "Mark as Unread": "Marquer comme non lu",
   "Rename Bot": "Renommer le Bot",
   "Group settings": "Paramètres du groupe",

@@ -69,6 +69,7 @@ export const AGENT_SESSION_TITLE_MAX = 80
 // profile, so the list served to one session can be shorter.
 export const TEAM_TOOLS = [
   'list_bots', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'list_bot_models',
+  'create_subbot', 'reclaim_subbot',
   'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'show_view',
   'request_secret', 'list_secrets', 'group_relay', 'read_own_chat',
   'read_group_chat', 'remember', 'forget', 'recall', 'read_browser',
@@ -99,3 +100,16 @@ export const HISTORY_TIMEOUT_MS = 20_000
 export const ASIDE_LIMIT = 'Answer cut off at the output limit.'
 
 export const STEER_CUT = 'ds-bot/steer'
+
+// Subbots (#421): a Bot may derive short-lived executors under itself. They are
+// ordinary Bots in every other way, so the user can open, steer and stop them; what
+// makes them subbots is who derived them and how they start — a report to the parent,
+// never a greeting to the user. Depth stays at one: a subbot derives none.
+export const SUBBOT_MAX_ACTIVE = 4
+export const SUBBOT_KICKOFF =
+  'You were derived by {parent} to carry out one work line, not to be a new colleague of the user. '
+  + 'Report to {parent} and work from what it sent you: it is your only supervisor, and it asked you '
+  + 'for this work. Do not greet the user and do not ask them where to start. When your work is done, '
+  + 'answer {parent} from the work it gave you: the result goes back to it by itself, so end your turn '
+  + 'with the result rather than messaging it. The user can still read your chat and write to you; if '
+  + 'they do, answer them, but keep working for {parent}.'
